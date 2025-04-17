@@ -59,7 +59,6 @@ selected_value = dict(optionsRecord)[selected_label]
 stampa_extremes(df, selected_value, selected_label)
 
 
-
 # Carica tutti i dati
 df = carica_dati()
 

@@ -1,3 +1,6 @@
+streamlit==1.44.1
 pandas
-streamlit
 openpyxl
+matplotlib
+pyarrow
+gitpython
