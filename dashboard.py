@@ -1,86 +1,138 @@
 import streamlit as st
-from utils import carica_dati
-from utils import carica_anno
-from utils import stampa_extremes
-from utils import optionsRecord
-from utils import optionsYear
+import pandas as pd
+import altair as alt
 
-import streamlit as st
-import matplotlib.pyplot as plt
-from utils import carica_dati
+from utils import (
+    carica_dati,
+    carica_anno,
+    stampa_extremes,
+    optionsRecord,
+    optionsYear
+)
+
+# ===============================
 
 st.title("Dashboard FantaStrambino")
-st.subheader("🏆 Classificone")
+st.subheader("⚽ Classificone")
 
-# Carica i dati da Excel
+# ===============================
+
 df = carica_dati()
 
-# Rimuove la colonna 'Pos' se presente
+# Rimuove colonna "Pos" se esiste
 df = df.drop(columns=['Pos'], errors='ignore')
 
-# Calcola presenze (quante volte ogni squadra compare)
+# Calcola presenze (quante stagioni ha partecipato ogni squadra)
 presenze = df['Squadra'].value_counts().rename('Pr.')
 
-# Raggruppa per squadra e somma solo le colonne numeriche
+# Raggruppa per squadra e somma i valori numerici
 classifica = df.groupby('Squadra').sum(numeric_only=True)
-
-# Aggiunge la colonna delle presenze
 classifica['Pr.'] = presenze
 
-# Mostra classifica ordinata per punti
+# Mostra la classifica ordinata per punti
 st.dataframe(classifica.sort_values(by='Pt.', ascending=False))
 
-##############################################
+# ===============================
 
 st.subheader("🥇 Record")
 
-option = st.selectbox(
-    'Seleziona anno',
-    (optionsYear)
-)
+# Selettore per anno
+option = st.selectbox("Seleziona anno", optionsYear)
 
-st.dataframe(
-    carica_anno(option),
-    use_container_width=True,
-    hide_index=True
-)
+# Mostra i dati dell’anno selezionato
+st.dataframe(carica_anno(option), use_container_width=True, hide_index=True)
 
-##############################################
+# ===============================
 
-# Prendi solo le label per mostrarle
+# Selettore tipo di record
 labels = [label for label, _ in optionsRecord]
-
-# Selezione
 selected_label = st.selectbox("Seleziona che dato vuoi vedere negli anni", labels)
-
-# Trova il valore corrispondente
 selected_value = dict(optionsRecord)[selected_label]
 
+# Mostra i record estremi per il tipo selezionato
 stampa_extremes(df, selected_value, selected_label)
 
+# ===============================
 
-# Carica tutti i dati
-df = carica_dati()
+st.subheader("📊 Andamento team")
 
-# Raggruppa per squadra e anno, prendi i punti
+# Crea pivot: anni in riga, squadre in colonna, valori = punti
 pivot = df.pivot_table(index='Anno', columns='Squadra', values='Pt.', aggfunc='sum')
+pivot = pivot.reindex(sorted(pivot.index))  # Ordina per anno
 
-# Ordina gli anni (in caso non siano in ordine)
-pivot = pivot.reindex(sorted(pivot.index), axis=0)
+# Trasforma in formato long per grafico
+chart_data = pivot.reset_index().melt(id_vars='Anno', var_name='Squadra', value_name='Punti')
+chart_data.dropna(inplace=True)
 
-# Mostra il DataFrame (opzionale)
-st.dataframe(pivot)
+# Grafico Altair con selezione multipla
+highlight = alt.selection_multi(fields=["Squadra"], bind="legend")
 
-# Line plot
-st.write("📈 Andamento punti per squadra nel tempo")
+chart = (
+    alt.Chart(chart_data)
+    .mark_line(point=True)
+    .encode(
+        x="Anno:O",
+        y="Punti:Q",
+        color="Squadra:N",
+        opacity=alt.condition(highlight, alt.value(1), alt.value(0.15)),
+        tooltip=["Anno", "Squadra", "Punti"]
+    )
+    .add_selection(highlight)
+    .properties(width=800, height=400)
+)
 
-fig, ax = plt.subplots(figsize=(12, 6))
+st.altair_chart(chart, use_container_width=True)
 
-for squadra in pivot.columns:
-    ax.plot(pivot.index, pivot[squadra], marker='o', label=squadra)
+# ===============================
 
-ax.set_xlabel("Anno")
-ax.set_ylabel("Punti")
-ax.set_title("Andamento Punti delle Squadre nel Tempo")
-ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')  # Legenda a lato
-st.pyplot(fig)
+st.subheader("🏅 Trofei Totali e Retrocessioni per Team")
+st.text("Le retrocessioni sono ufficiali solo a partire dalla stagione 2023-2024.")
+
+# Carica il foglio "Albo" da Excel
+albo_df = pd.read_excel("FsStats.xlsx", sheet_name="Albo")
+albo_df.columns = albo_df.columns.str.strip()
+
+# Identifica le competizioni escludendo anno e retrocessioni
+competizioni = [col for col in albo_df.columns if col.lower() not in ["anno", "retrocessioni"]]
+
+# 📊 Trasforma in formato lungo per conteggio trofei
+long_albo = pd.melt(
+    albo_df,
+    id_vars=["Anno"],
+    value_vars=competizioni,
+    var_name="Competizione",
+    value_name="Squadra"
+)
+long_albo = long_albo[long_albo["Squadra"] != "-"]  # Elimina righe con '-'
+
+# Conta trofei per squadra e competizione
+conteggio_trofei = (
+    long_albo.groupby(["Squadra", "Competizione"])
+    .size()
+    .unstack(fill_value=0)
+    .reset_index()
+)
+conteggio_trofei["Totale Trofei"] = conteggio_trofei[competizioni].sum(axis=1)
+
+# 📉 Conta retrocessioni
+retro_data = albo_df[["Anno", "Retrocessioni"]].dropna()
+retro_expanded = (
+    retro_data["Retrocessioni"]
+    .str.split(",", expand=True)
+    .stack()
+    .str.strip()
+    .reset_index(drop=True)
+    .to_frame(name="Squadra")
+)
+retro_count = retro_expanded["Squadra"].value_counts().reset_index()
+retro_count.columns = ["Squadra", "Retrocessioni"]
+
+# 🔗 Unisce trofei e retrocessioni
+conteggio_completo = pd.merge(conteggio_trofei, retro_count, on="Squadra", how="left")
+conteggio_completo["Retrocessioni"] = conteggio_completo["Retrocessioni"].fillna(0).astype(int)
+
+# Ordina per trofei
+conteggio_completo = conteggio_completo.sort_values("Totale Trofei", ascending=False)
+
+# Mostra il risultato finale
+st.dataframe(conteggio_completo, hide_index=True)
