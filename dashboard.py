@@ -11,60 +11,52 @@ from utils import (
 )
 
 # ===============================
-
+# TITOLI E INIZIO
+# ===============================
 st.title("Dashboard FantaStrambino")
 st.subheader("⚽ Classificone")
 
-# ===============================
-
+# Caricamento dati principali
 df = carica_dati()
+df.columns = df.columns.str.strip()
 
-# Rimuove colonna "Pos" se esiste
-df = df.drop(columns=['Pos'], errors='ignore')
-
-# Calcola presenze (quante stagioni ha partecipato ogni squadra)
+# ===============================
+# 📊 CLASSIFICA GENERALE
+# ===============================
+df = df.drop(columns=['Pos'], errors='ignore')  # Rimuove colonna Pos se presente
 presenze = df['Squadra'].value_counts().rename('Pr.')
-
-# Raggruppa per squadra e somma i valori numerici
 classifica = df.groupby('Squadra').sum(numeric_only=True)
 classifica['Pr.'] = presenze
 
-# Mostra la classifica ordinata per punti
 st.dataframe(classifica.sort_values(by='Pt.', ascending=False))
 
 # ===============================
-
-st.subheader("🥇 Record")
-
-# Selettore per anno
+# CLASSIFICA PER ANNO
+# ===============================
+st.subheader("📊 Classifica per anno")
 option = st.selectbox("Seleziona anno", optionsYear)
-
-# Mostra i dati dell’anno selezionato
 st.dataframe(carica_anno(option), use_container_width=True, hide_index=True)
 
 # ===============================
-
-# Selettore tipo di record
+# 🥇 RECORD STORICI
+# ===============================
+st.subheader("🥇 Record")
 labels = [label for label, _ in optionsRecord]
 selected_label = st.selectbox("Seleziona che dato vuoi vedere negli anni", labels)
 selected_value = dict(optionsRecord)[selected_label]
-
-# Mostra i record estremi per il tipo selezionato
 stampa_extremes(df, selected_value, selected_label)
 
 # ===============================
+# ANDAMENTO PUNTI NEGLI ANNI
+# ===============================
+st.subheader("🎢 Andamento team")
+st.markdown("Per selezionare più squadre dalla legenda, tieni premuto **MAIUSC** (o ⌘ Command su Mac) e clicca sui nomi.")
 
-st.subheader("📊 Andamento team")
-
-# Crea pivot: anni in riga, squadre in colonna, valori = punti
 pivot = df.pivot_table(index='Anno', columns='Squadra', values='Pt.', aggfunc='sum')
-pivot = pivot.reindex(sorted(pivot.index))  # Ordina per anno
-
-# Trasforma in formato long per grafico
+pivot = pivot.reindex(sorted(pivot.index))
 chart_data = pivot.reset_index().melt(id_vars='Anno', var_name='Squadra', value_name='Punti')
 chart_data.dropna(inplace=True)
 
-# Grafico Altair con selezione multipla
 highlight = alt.selection_multi(fields=["Squadra"], bind="legend")
 
 chart = (
@@ -84,18 +76,59 @@ chart = (
 st.altair_chart(chart, use_container_width=True)
 
 # ===============================
+# DISTRIBUZIONE PIAZZAMENTI (BOXPLOT)
+# ===============================
+st.subheader("📦 Distribuzione Piazzamenti per Squadra")
 
+st.markdown("""
+Il boxplot mostra la distribuzione dei piazzamenti in classifica per ogni squadra nelle varie stagioni.
+
+- **Min** e **Max**: miglior e peggior piazzamento ottenuto  
+- **Q1 (1º quartile)**: il 25% dei risultati si trova sotto questo valore  
+- **Q3 (3º quartile)**: il 75% dei risultati si trova sotto questo valore  
+- Insieme Q1 e Q3 formano la "scatola" che contiene la metà centrale dei risultati  
+- **Mediana**: il piazzamento tipico (linea dentro la scatola)  
+- Un box stretto indica una squadra costante, uno largo indica molta variabilità  
+""")
+
+df = carica_dati()
+df["Pos"] = pd.to_numeric(df["Pos"], errors="coerce")
+df = df.dropna(subset=["Pos"])
+
+boxplot = alt.Chart(df).mark_boxplot(extent='min-max').encode(
+    x=alt.X('Squadra:N', sort='y'),
+    y=alt.Y('Pos:Q', title="Posizione in Classifica", scale=alt.Scale(reverse=True)),
+    color='Squadra:N'
+)
+
+mediana_bianca = alt.Chart(df).mark_tick(
+    color='white',
+    size=20,
+    thickness=2
+).encode(
+    x='Squadra:N',
+    y='median(Pos):Q'
+)
+
+grafico_finale = (boxplot + mediana_bianca).properties(
+    width=800,
+    height=400,
+    title="📦 Distribuzione Piazzamenti per Squadra"
+)
+
+st.altair_chart(grafico_finale, use_container_width=True)
+
+# ===============================
+# TROFEI E RETROCESSIONI
+# ===============================
 st.subheader("🏅 Trofei Totali e Retrocessioni per Team")
 st.text("Le retrocessioni sono ufficiali solo a partire dalla stagione 2023-2024.")
 
-# Carica il foglio "Albo" da Excel
 albo_df = pd.read_excel("FsStats.xlsx", sheet_name="Albo")
 albo_df.columns = albo_df.columns.str.strip()
 
-# Identifica le competizioni escludendo anno e retrocessioni
 competizioni = [col for col in albo_df.columns if col.lower() not in ["anno", "retrocessioni"]]
 
-# 📊 Trasforma in formato lungo per conteggio trofei
 long_albo = pd.melt(
     albo_df,
     id_vars=["Anno"],
@@ -103,9 +136,8 @@ long_albo = pd.melt(
     var_name="Competizione",
     value_name="Squadra"
 )
-long_albo = long_albo[long_albo["Squadra"] != "-"]  # Elimina righe con '-'
+long_albo = long_albo[long_albo["Squadra"] != "-"]
 
-# Conta trofei per squadra e competizione
 conteggio_trofei = (
     long_albo.groupby(["Squadra", "Competizione"])
     .size()
@@ -114,7 +146,6 @@ conteggio_trofei = (
 )
 conteggio_trofei["Totale Trofei"] = conteggio_trofei[competizioni].sum(axis=1)
 
-# 📉 Conta retrocessioni
 retro_data = albo_df[["Anno", "Retrocessioni"]].dropna()
 retro_expanded = (
     retro_data["Retrocessioni"]
@@ -127,12 +158,25 @@ retro_expanded = (
 retro_count = retro_expanded["Squadra"].value_counts().reset_index()
 retro_count.columns = ["Squadra", "Retrocessioni"]
 
-# 🔗 Unisce trofei e retrocessioni
 conteggio_completo = pd.merge(conteggio_trofei, retro_count, on="Squadra", how="left")
 conteggio_completo["Retrocessioni"] = conteggio_completo["Retrocessioni"].fillna(0).astype(int)
-
-# Ordina per trofei
 conteggio_completo = conteggio_completo.sort_values("Totale Trofei", ascending=False)
 
-# Mostra il risultato finale
 st.dataframe(conteggio_completo, hide_index=True)
+
+# ===============================
+# MEDIA PUNTI PER POSIZIONE
+# ===============================
+st.subheader("📈 Media Punti per Posizione")
+
+df["Pt."] = pd.to_numeric(df["Pt."], errors="coerce")
+df = df.dropna(subset=["Pt."])
+
+media_punti_per_posizione = (
+    df.groupby("Pos")["Pt."]
+    .mean()
+    .sort_index()
+)
+
+for posizione, media in media_punti_per_posizione.items():
+    st.markdown(f"- **Posizione {int(posizione)}**: {media:.2f} punti")
